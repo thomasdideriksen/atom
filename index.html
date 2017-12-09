@@ -17,12 +17,10 @@
             function init() {
                 console.log('init');
                 
-                
                 var content = document.getElementById('content');
                 var load = function() {
                     var parser = new ATOM.Parser(this.response);
                     var result = parser.parse();
-                    console.log(result);
                     result.enumerate(function(name, payload, level) {
                         var indent = '';
                         for (var i = 0; i < level; i++) {
@@ -33,6 +31,9 @@
                             content.innerHTML += indent + '<span class="payload">' + JSON.stringify(payload) + '</span><br>';
                         }
                     });
+                    
+                    console.log(result);
+                    console.log(result.get('moov.trak[0].tkhd'));
                 }
                 
                 var req = new XMLHttpRequest();

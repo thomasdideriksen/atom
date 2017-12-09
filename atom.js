@@ -58,15 +58,26 @@ ATOM.Reader.prototype = {
 }
 
 ATOM.ParseResult = function(data) {
-    this.data = data;
+    this._data = data;
+    this._decode();
+    this._map = this._buildMap();
 }
 
 ATOM.ParseResult.prototype = {
     
+    get: function(address) {
+        var arr = address.split('.');
+        var map = this._map;
+        for (var i = 0; i < arr.length; i++) {
+            map = map[arr[i]];
+        }
+        return map;
+    },
+    
     enumerate: function(callback) {
         var stack = [];
-        for (var i = this.data.children.length - 1; i >= 0; i--) {
-            stack.push({data: this.data.children[i], level: 0});
+        for (var i = this._data.children.length - 1; i >= 0; i--) {
+            stack.push({data: this._data.children[i], level: 0});
         }
         while (stack.length > 0) {
             var entry = stack.pop();
@@ -78,6 +89,100 @@ ATOM.ParseResult.prototype = {
                 }
             }
         }
+    },
+    
+    _buildMap: function() {
+        var map = {};
+        var stack = [];
+        stack.push({children: this._data.children, map: map});
+        while (stack.length > 0) {
+            var entry = stack.pop();
+            for (var i = 0; i < entry.children.length; i++) {
+                var child = entry.children[i]; 
+                var newMap = {}
+                
+                if (child.children && child.children.length > 0) {
+                    stack.push({children: child.children, map: newMap});
+                } else if (child.payload) {
+                    newMap = child.payload;
+                }
+                
+                if (child.name in entry.map) {
+                    entry.map[child.name + '[0]'] = entry.map[child.name];
+                    delete entry.map[child.name];
+                    entry.map[child.name + '[1]'] = newMap
+                }
+                else if (child.name + '[1]' in entry.map) {
+                    var idx = 2;
+                    while (child.name + '[' + idx + ']' in entry.map) {
+                        idx++;
+                    }
+                    entry.map[child.name + '[' + idx + ']'] = newMap;
+                } 
+                else {
+                    entry.map[child.name] = newMap
+                }
+            }
+        }
+        return map;
+    },
+    
+    _decode: function() {
+        var that = this;
+        this.enumerate(function(name, payload) {
+            var stack = [];
+            stack.push(payload);
+            while (stack.length > 0) {
+                var obj = stack.pop();
+                for (var propName in obj) {
+                    var prop = obj[propName];
+                    if (Array.isArray(prop.value)) {
+                        for (var i = 0; i < prop.value.length; i++) {
+                            if (typeof prop.value[i] === 'object') {
+                                stack.push(prop.value[i]);
+                            }
+                        }
+                    } 
+                    switch (prop.encoding) {
+                        case 'date':
+                            prop.decodedValue = that._decodeDate(prop.value);
+                            break;
+                        case 'fixed32':
+                            prop.decodedValue = that._decodeFixedPoint(prop.value, 16);
+                            break;
+                        case 'fixed16':
+                            prop.decodedValue = that._decodeFixedPoint(prop.value, 8);
+                            break;
+                        case 'code':
+                            prop.decodedValue = ATOM.typeToString(prop.value);
+                            break;
+                        case 'matrix':
+                            prop.decodedValue = that._decodeMatrix(prop.value);
+                            break;
+                    }
+                    delete prop.encoding;
+                }
+            }
+        });
+    },
+    
+    _decodeDate: function(rawValue) {
+        var movEpochSeconds = Date.UTC(1904, 0, 1, 0, 0 ,0, 0) / 1000.0;
+        var valueSeconds = movEpochSeconds + rawValue;
+        return new Date(valueSeconds * 1000.0);
+    },
+     
+    _decodeFixedPoint: function(rawValue, shift) {
+        return rawValue / (1 << shift);
+    },
+    
+    _decodeMatrix: function(rawValue) {
+        var scale1 = 1.0 / (1 << 16);
+        var scale2 = 1.0 / (1 << 30);
+        return [
+            [rawValue[0] * scale1, rawValue[1] * scale1, rawValue[2] * scale2],
+            [rawValue[3] * scale1, rawValue[4] * scale1, rawValue[5] * scale2],
+            [rawValue[6] * scale1, rawValue[7] * scale1, rawValue[8] * scale2]];   
     },
 }
 
@@ -120,17 +225,25 @@ ATOM.Parser = function(buffer) {
 ATOM.Parser.prototype = {
     
     MOV_PAYLOAD_TEMPLATES: {
-         mvhd: [
+        ftyp: [
+            'majorBrand        #t:32u,enc:code',
+            'minorVersion      #t:32u',
+            'compatibleBrands  #t:{ftypCompatibleBrand},c:([payloadSize] - 8) / 4',
+        ],
+        ftypCompatibleBrand: [
+            'compatibleBrand:  #t:32u,enc:code',
+        ],
+        mvhd: [
             'version           #t:8u,e:0,b:abort',
             'flags             #t:8u,c:3',
-            'creationTime      #t:32u,i:date',
-            'modificationTime  #t:32u,i:date',
+            'creationTime      #t:32u,enc:date',
+            'modificationTime  #t:32u,enc:date',
             'timeScale         #t:32u',
             'duration          #t:32u',
-            'preferredRate     #t:32u,i:fixed32',
-            'preferredVolume   #t:16u,i:fixed16',
+            'preferredRate     #t:32u,enc:fixed32',
+            'preferredVolume   #t:16u,enc:fixed16',
             '                  #t:8u,c:10,e:0',
-            'matrixStructure   #t:32u,c:9,i:matrix',
+            'matrixStructure   #t:32u,c:9,enc:matrix',
             'previewTime       #t:32u',
             'previewDuration   #t:32u',
             'posterTime        #t:32u',
@@ -142,25 +255,25 @@ ATOM.Parser.prototype = {
         tkhd: [
             'version           #t:8u,e:0,b:abort',
             'flags             #t:8u,c:3',
-            'creationTime      #t:32u,i:date',
-            'modificationTime  #t:32u,i:date',
+            'creationTime      #t:32u,enc:date',
+            'modificationTime  #t:32u,enc:date',
             'trackId           #t:32u',
             '                  #t:8u,c:4,e:0',
             'duration          #t:32u',
             '                  #t:8u,c:8,e:0',
             'layer             #t:16u',
             'alternateGroup    #t:16u',
-            'volume            #t:16u,i:fixed16',
+            'volume            #t:16u,enc:fixed16',
             '                  #t:8u,c:2,e:0',
-            'matrixStructure   #t:32u,c:9,i:matrix',
-            'trackWidth        #t:32u,i:fixed32',
-            'trackHeight       #t:32u,i:fixed32',
+            'matrixStructure   #t:32u,c:9,enc:matrix',
+            'trackWidth        #t:32u,enc:fixed32',
+            'trackHeight       #t:32u,enc:fixed32',
         ],
         mdhd: [
             'version           #t:8u,e:0,b:abort',
             'flags             #t:8u,c:3',
-            'creationTime      #t:32u,i:date',
-            'modificationTime  #t:32u,i:date',
+            'creationTime      #t:32u,enc:date',
+            'modificationTime  #t:32u,enc:date',
             'timeScale         #t:32u',
             'duration          #t:32u',
             'language          #t:16u',
@@ -169,8 +282,8 @@ ATOM.Parser.prototype = {
         hdlr: [
             'version               #t:8u,e:0,b:abort',
             'flags                 #t:8u,c:3',
-            'componentType         #t:32u,i:code',
-            'componentSubtype      #t:32u,i:code',
+            'componentType         #t:32u,enc:code',
+            'componentSubtype      #t:32u,enc:code',
             'componentManufacturer #t:32u',
             'componentFlags        #t:32u',
             'componentFlagsMask    #t:32u,e:0',
@@ -185,20 +298,20 @@ ATOM.Parser.prototype = {
         clef: [
             'version #t:8u,e:0,b:abort',
             'flags   #t:8u,c:3',
-            'width   #t:32u,i:fixed32',
-            'height  #t:32u,i:fixed32',
+            'width   #t:32u,enc:fixed32',
+            'height  #t:32u,enc:fixed32',
         ],
         prof: [
             'version #t:8u,e:0,b:abort',
             'flags   #t:8u,c:3',
-            'width   #t:32u,i:fixed32',
-            'height  #t:32u,i:fixed32',
+            'width   #t:32u,enc:fixed32',
+            'height  #t:32u,enc:fixed32',
         ],
         enof: [
             'version #t:8u,e:0,b:abort',
             'flags   #t:8u,c:3',
-            'width   #t:32u,i:fixed32',
-            'height  #t:32u,i:fixed32',
+            'width   #t:32u,enc:fixed32',
+            'height  #t:32u,enc:fixed32',
         ],
         elst: [
             'version         #t:8u,e:0,b:abort',
@@ -210,7 +323,7 @@ ATOM.Parser.prototype = {
         elstEditList : [
             'trackDuration #t:32u',
             'mediaTime     #t:32u',
-            'mediaRate     #t:32u,i:fixed32',
+            'mediaRate     #t:32u,enc:fixed32',
         ],
         dref: [
             'version         #t:8u,e:0,b:abort',
@@ -220,7 +333,7 @@ ATOM.Parser.prototype = {
         ],
         drefDataReference: [
             'size    #t:32u',
-            'type    #t:32u,i:code',
+            'type    #t:32u,enc:code',
             'version #t:8u',
             'flags   #t:8u,c:3',
             'data    #t:8u,c:{size} - 12',
@@ -319,65 +432,7 @@ ATOM.Parser.prototype = {
         var data = this._parseGeneric(
             this.MOV_CONTAINER_ATOMS,
             this.MOV_PAYLOAD_TEMPLATES);
-        var result = new ATOM.ParseResult(data);
-        var that = this;
-        result.enumerate(function(name, payload) {
-            var stack = [];
-            stack.push(payload);
-            while (stack.length > 0) {
-                var obj = stack.pop();
-                for (var propName in obj) {
-                    var prop = obj[propName];
-                    if (Array.isArray(prop.value)) {
-                        for (var i = 0; i < prop.value.length; i++) {
-                            if (typeof prop.value[i] === 'object') {
-                                stack.push(prop.value[i]);
-                            }
-                        }
-                    } else {
-                        switch (prop.interpretation) {
-                            case 'date':
-                                prop.interpretedValue = that._interpretDate(prop.value);
-                                break;
-                            case 'fixed32':
-                                prop.interpretedValue = that._interpretFixedPoint(prop.value, 16);
-                                break;
-                            case 'fixed16':
-                                prop.interpretedValue = that._interpretFixedPoint(prop.value, 8);
-                                break;
-                            case 'code':
-                                prop.interpretedValue = ATOM.typeToString(prop.value);
-                                break;
-                            case 'matrix':
-                                prop.interpretedValue = that._interpretMatrix(prop.value);
-                                break;
-                        }
-                    }
-                    delete prop.interpretation;
-                }
-            }
-        });
-        
-        return result;
-    },
-    
-    _interpretDate: function(rawValue) {
-        var movEpochSeconds = Date.UTC(1904, 0, 1, 0, 0 ,0, 0) / 1000.0;
-        var valueSeconds = movEpochSeconds + rawValue;
-        return new Date(valueSeconds * 1000.0);
-    },
-     
-    _interpretFixedPoint: function(rawValue, shift) {
-        return rawValue / (1 << shift);
-    },
-    
-    _interpretMatrix: function(rawValue) {
-        var scale1 = 1.0 / (1 << 16);
-        var scale2 = 1.0 / (1 << 30);
-        return [
-            [rawValue[0] * scale1, rawValue[1] * scale1, rawValue[2] * scale2],
-            [rawValue[3] * scale1, rawValue[4] * scale1, rawValue[5] * scale2],
-            [rawValue[6] * scale1, rawValue[7] * scale1, rawValue[8] * scale2]];   
+        return new ATOM.ParseResult(data);
     },
     
     _parseGeneric: function(containers, payloadTemplates) {
@@ -411,14 +466,14 @@ ATOM.Parser.prototype = {
                 stack.push({ origin: reader.position(), offset: 0, byteSize: byteSize - 8, children: child.children});
             } 
             else if (typeName in payloadTemplates) {
-                child.payload = this._parsePayload(payloadTemplates, typeName);
+                child.payload = this._parsePayload(payloadTemplates, typeName, byteSize - 8);
             }
         }
         
         return result;
     },
     
-    _parsePayload: function(templates, templateId) {
+    _parsePayload: function(templates, templateId, byteSize) {
         
         // Prepare variables
         var reader = this._reader;
@@ -434,6 +489,7 @@ ATOM.Parser.prototype = {
             var props = field[1].trim().split(',');
             
             // Parse field data
+            var hasCount = false;
             var fieldData = {'count': 1, 'behavior': 'throw'}
             for (var j = 0; j < props.length; j++) {
                 
@@ -443,10 +499,10 @@ ATOM.Parser.prototype = {
                 
                 switch (key) {
                     case 't': fieldData['type'] = value; break;
-                    case 'c': fieldData['count'] = value; break;
+                    case 'c': fieldData['count'] = value; hasCount = true; break;
                     case 'e': fieldData['expected'] = value; break;
                     case 'b': fieldData['behavior'] = value; break;
-                    case 'i': fieldData['interpretation'] = value; break;
+                    case 'enc': fieldData['encoding'] = value; break;
                 }
             }
             
@@ -456,6 +512,11 @@ ATOM.Parser.prototype = {
             var match;
             while ((match = re.exec(countField)) !== null) {
                 countField = countField.replace(match[0], result[match[1]].value);
+            }
+            var re = /\[(.+?)\]/g
+            var constants = {'payloadSize': byteSize}
+            while ((match = re.exec(countField)) !== null) {
+                countField = countField.replace(match[0], constants[match[1]]);
             }
             var count = eval(countField);
             ATOM.IF_FALSE_THROW(Number.isNaN(count) == false && count >= 0, 'Invalid count: ' + countField);
@@ -474,6 +535,7 @@ ATOM.Parser.prototype = {
                 // Verify value
                 var expected = fieldData['expected']
                 if (expected && expected != value.toString()) {
+                    
                     // Value mismatch, apply desired error behavior
                     switch (fieldData['behavior']) {
                         case 'abort': return result;
@@ -488,8 +550,8 @@ ATOM.Parser.prototype = {
             // Assign data
             if (name.length > 0) {
                 result[name] = {};
-                result[name].value = (values.length > 1 || match) ? values : values[0]; // Note: Composite types should ALWAYS be in an array - even an array of size 1
-                result[name].interpretation = fieldData['interpretation'];
+                result[name].value = (values.length > 1 || hasCount) ? values : values[0];
+                result[name].encoding = fieldData['encoding'];
             }
         }
         
