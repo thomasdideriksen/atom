@@ -369,9 +369,9 @@ ATOM.Parser.prototype = {
             'syncSampleTable   #t:32u,c:{numberOfEntries}',
         ],
         sdtp: [
-            'version           #t:8u,e:0,b:abort',
-            'flags             #t:8u,c:3',
-            // TODO
+            'version                    #t:8u,e:0,b:abort',
+            'flags                      #t:8u,c:3',
+            'sampleDependencyFlagsTable #t:8u,c:[payloadSize] - 4',
         ],
         stsc: [
             'version            #t:8u,e:0,b:abort',
