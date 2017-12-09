@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+
+<html>
+    <head>
+        <title>Atom Test</title>
+        <meta charset='utf-8' /> 
+        <script src='atom.js'></script>
+        <style>
+            .atom_name {
+            }
+            .payload {
+                color: #b0b0b0;
+            }
+        </style>
+        <script>
+            
+            function init() {
+                console.log('init');
+                
+                
+                var content = document.getElementById('content');
+                var load = function() {
+                    var parser = new ATOM.Parser(this.response);
+                    var result = parser.parse();
+                    console.log(result);
+                    result.enumerate(function(name, payload, level) {
+                        var indent = '';
+                        for (var i = 0; i < level; i++) {
+                            indent += '  ';
+                        }
+                        content.innerHTML += indent + '<span class="atom_name">' + name + '</span><br>';
+                        if (payload) {
+                            content.innerHTML += indent + '<span class="payload">' + JSON.stringify(payload) + '</span><br>';
+                        }
+                    });
+                }
+                
+                var req = new XMLHttpRequest();
+                req.responseType = 'arraybuffer';
+                req.addEventListener('load', load);
+                req.open('get', 'video.mov');
+                req.send();
+            }
+        
+        </script>
+    </head>
+    <body onload='init()'>
+        <pre id='content'></pre>
+    </body>
+</html>
