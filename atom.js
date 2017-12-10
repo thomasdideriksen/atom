@@ -69,6 +69,9 @@ ATOM.ParseResult.prototype = {
         var arr = address.split('.');
         var map = this._map;
         for (var i = 0; i < arr.length; i++) {
+            if (!map) {
+                return null;
+            }
             map = map[arr[i]];
         }
         return map;
@@ -347,7 +350,7 @@ ATOM.Parser.prototype = {
         ],
         stsdSampleDescription: [
             'size               #t:32u',
-            'dataFormat         #t:32u',
+            'dataFormat         #t:32u,enc:code',
             '                   #t:8u,c:6,e:0',
             'dataReferenceIndex #t:16u',
             'additionalData     #t:8u,c:{size} - 16',
@@ -459,7 +462,7 @@ ATOM.Parser.prototype = {
             var type = reader.read32u();
             var typeName = ATOM.typeToString(type);
             
-            var child = { name: typeName, type: type, byteSize: byteSize, children: [] };
+            var child = { name: typeName, type: type, byteSize: byteSize, children: [], byteOffset: context.origin + context.offset };
             context.children.push(child);
             
             if (containerSet.has(typeName)) {

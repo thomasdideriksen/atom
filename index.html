@@ -32,8 +32,82 @@
                         }
                     });
                     
+                    
+                    //
+                    // https://developer.apple.com/library/content/documentation/QuickTime/QTFF/QTFFChap2/qtff2.html
+                    //
+                    
                     console.log(result);
-                    console.log(result.get('moov.trak[0].tkhd'));
+                    
+                    //var timeScale = result.get('moov.mvhd.timeScale.value');
+                    //console.log(timeScale);
+                    
+                    var track = 0;
+                    while (true) {
+                        
+                        // Get track
+                        console.log('** Track ' + track);
+                        var trak = result.get('moov.trak[' + track + ']');
+                        if (!trak) {
+                            break;
+                        }
+                        
+                        // Get time scale
+                        var mediaHeader = trak.mdia.mdhd;
+                        var timeScale = mediaHeader.timeScale.value;
+                        console.log('Time scale: ' + timeScale);
+                        
+                        // Get sample table + show sample format
+                        var sampleTable = trak.mdia.minf.stbl;
+                        var sampleDescriptionTable = sampleTable.stsd.sampleDescriptionTable.value;
+                        for (var i = 0; i < sampleDescriptionTable.length; i++) {
+                            var format = sampleDescriptionTable[i].dataFormat.decodedValue;
+                            console.log('Format: ' + format);
+                        }
+                        
+                        // Get time-to-sample table
+                        var timeToSampleTable = sampleTable.stts.timeToSampleTable.value;
+                        var combinedDuration = 0;
+                        var totalSampleCount = 0;
+                        for (var i = 0; i < timeToSampleTable.length; i++) {
+                            combinedDuration += 
+                                timeToSampleTable[i].sampleCount.value * 
+                                timeToSampleTable[i].sampleDuration.value;
+                            totalSampleCount += timeToSampleTable[i].sampleCount.value;
+                        }
+                        console.log('Combined duration: ' + (combinedDuration / timeScale).toFixed(2) + ' seconds, total samples: ' + totalSampleCount);
+                        
+                        // Get sample-to-chunk table
+                        var sampleToChunkTable = sampleTable.stsc.sampleToChunkTable.value;
+                        var totalSampleCount2 = 0;
+                        for (var i = 0; i < sampleToChunkTable.length - 1; i++) {
+                            var a = sampleToChunkTable[i];
+                            var b = sampleToChunkTable[i + 1];
+                            
+                            var chunkDelta = b.firstChunk.value - a.firstChunk.value;
+                            totalSampleCount2 += chunkDelta * a.samplesPerChunk.value;
+                        }
+                        console.log('Total samples: ' + totalSampleCount2);
+                        
+                        // Get chunk offset table
+                        var chunkOffsetTable = sampleTable.stco.chunkOffsetTable.value;
+                        var firstChunkOffset = chunkOffsetTable[0];
+                        
+                        // Get sample-size table
+                        var sampleSizeTable = sampleTable.stsz.sampleSizeTable.value;
+                        console.log(sampleSizeTable);
+                        
+                        
+                        var reader = new ATOM.Reader(this.response);
+                        reader.seek(firstChunkOffset);
+                        
+                        
+                        
+                        
+                        
+                        
+                        track++;
+                    }
                 }
                 
                 var req = new XMLHttpRequest();
