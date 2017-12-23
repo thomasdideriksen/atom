@@ -392,13 +392,19 @@ ATOM.Parser.prototype = {
             'flags             #t:8u,c:3',
             'sampleSize        #t:32u',
             'numberOfEntries   #t:32u',
-            'sampleSizeTable   #t:32u,c:{numberOfEntries}',
+            'sampleSizeTable   #t:32u,c:{numberOfEntries} * ({sampleSize} > 0 ? 1 : 0)',
         ],
         stco: [
             'version            #t:8u,e:0,b:abort',
             'flags              #t:8u,c:3',
             'numberOfEntries    #t:32u',
             'chunkOffsetTable   #t:32u,c:{numberOfEntries}',
+        ],
+        co64: [
+            'version            #t:8u,e:0,b:abort',
+            'flags              #t:8u,c:3',
+            'numberOfEntries    #t:32u',
+            'chunkOffsetTable   #t:64u,c:{numberOfEntries}',
         ],
         smhd: [
             'version #t:8u,e:0,b:abort',
@@ -496,9 +502,10 @@ ATOM.Parser.prototype = {
             var fieldData = {'count': 1, 'behavior': 'throw'}
             for (var j = 0; j < props.length; j++) {
                 
-                var prop = props[j].split(':');
-                var key = prop[0].trim();
-                var value = prop[1].trim();
+                var re = /(.+?):(.+)/g
+                var match = re.exec(props[j]);
+                var key = match[1].trim();
+                var value = match[2].trim();
                 
                 switch (key) {
                     case 't': fieldData['type'] = value; break;
@@ -511,9 +518,10 @@ ATOM.Parser.prototype = {
             
             // Evalute count
             var countField = fieldData['count'];
+            var countFieldOriginal = countField;
             var re = /{(.+?)}/g
             var match;
-            while ((match = re.exec(countField)) !== null) {
+            while ((match = re.exec(countFieldOriginal)) !== null) {
                 countField = countField.replace(match[0], result[match[1]].value);
             }
             var re = /\[(.+?)\]/g
