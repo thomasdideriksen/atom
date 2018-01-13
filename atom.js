@@ -47,6 +47,18 @@ ATOM.Reader.prototype = {
         return val;
     },
     
+    readZeroTerminatedString: function() {
+        var result = ''
+        while (true) {
+            var c = this.read8u();
+            if (c == 0) {
+                break;
+            }
+            result += String.fromCharCode(c);
+        }
+        return result;
+    },
+    
     readPascalString: function() {
         var length = this.read8u();
         var result = '';
@@ -290,7 +302,7 @@ ATOM.Parser.prototype = {
             'componentManufacturer #t:32u',
             'componentFlags        #t:32u',
             'componentFlagsMask    #t:32u,e:0',
-            'componentName         #t:PascalString',
+            'componentName         #t:PascalString', // Note: ZeroTerminatedString for MP4
         ],
         vmhd: [
             'version      #t:8u,e:0,b:abort',
@@ -420,6 +432,29 @@ ATOM.Parser.prototype = {
             'balance        #t:16u',
             '               #t:16u,e:0',
         ],
+        ctts: [
+            'version                #t:8u,e:0,b:abort',
+            'flags                  #t:8u,c:3',
+            'numberOfEntries        #t:32u',
+            'compositionOffsetTable #t:{compositionOffsetTableEntry},c:{numberOfEntries}',
+        ],
+        compositionOffsetTableEntry: [
+            'sampleCount        #t:32u',
+            'compositionOffset  #t:32u',
+        ],
+        /*iods: [
+            'version                #t:8u,e:0,b:abort',
+            'flags                  #t:8u,c:3',
+            'tag                    #t:8u',
+            'length                 #t:8u',
+            'objectDescriptorId     #t:16u',
+            'odProfileLevel         #t:8u',
+            'sceneProfileLevel      #t:8u',
+            'audioProfileId         #t:8u',
+            'videoProfileId         #t:8u',
+            'graphicsProfileLevel   #t:8u',
+        ],*/
+        
     },
     
     MOV_CONTAINER_ATOMS: [
@@ -435,6 +470,7 @@ ATOM.Parser.prototype = {
         'dinf',
         'stbl',
         'gmhd',
+        'udta',
     ],
     
     parse: function() {
@@ -450,7 +486,7 @@ ATOM.Parser.prototype = {
         var containerSet = new Set(containers);
         var result = {children: []};
         var stack = [];
-        
+      
         stack.push({origin: 0, offset: 0, byteSize: reader.size(), children: result.children });
         
         while (stack.length > 0) {
@@ -459,11 +495,16 @@ ATOM.Parser.prototype = {
             reader.seek(context.origin + context.offset);
             
             var byteSize = reader.read32u();
-            ATOM.IF_FALSE_THROW(byteSize >= 8, 'Atom size is too small');
+            if (byteSize == 0) {
+                console.warn('Ignoring zero box size (or possibly legacy "udta" terminator)')
+                continue;
+            }
+            
+            ATOM.IF_FALSE_THROW(byteSize >= 8, 'Atom size is too small (' + byteSize + ')');
             
             if (context.offset + byteSize < context.byteSize) {
                 stack.push({origin: context.origin, offset: context.offset + byteSize, byteSize: context.byteSize, children: context.children});
-            }
+            } 
             
             var type = reader.read32u();
             var typeName = ATOM.typeToString(type);
@@ -472,10 +513,12 @@ ATOM.Parser.prototype = {
             context.children.push(child);
             
             if (containerSet.has(typeName)) {
-                stack.push({ origin: reader.position(), offset: 0, byteSize: byteSize - 8, children: child.children});
+                stack.push({ origin: reader.position(), offset: 0, byteSize: byteSize - 8, children: child.children, parentType: typeName});
             } 
             else if (typeName in payloadTemplates) {
                 child.payload = this._parsePayload(payloadTemplates, typeName, byteSize - 8);
+            } else {
+                console.warn('Unknown box type: ' + typeName);
             }
         }
         
